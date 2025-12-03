@@ -25,10 +25,12 @@ export async function getCandyList(req, res) {
 
     await page.goto(url, {
       waitUntil: "networkidle2",
-      timeout: 60000
+      timeout: 60000,
     });
 
-    await page.waitForTimeout(5000);
+    // ❌ Not supported: await page.waitForTimeout(5000)
+    // ✅ Use this instead:
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
     const html = await page.content();
 
@@ -36,7 +38,7 @@ export async function getCandyList(req, res) {
 
     const PAIR_REGEX = /"pairAddress":"(.*?)"/g;
 
-    let matches = [];
+    const matches = [];
     let m;
 
     while ((m = PAIR_REGEX.exec(html)) !== null) {
@@ -45,9 +47,8 @@ export async function getCandyList(req, res) {
 
     res.json({
       count: matches.length,
-      results: matches.slice(0, 10)
+      results: matches.slice(0, 10),
     });
-
   } catch (err) {
     console.error("Puppeteer Error:", err);
     res.status(500).json({ error: "Failed to fetch or parse page" });
