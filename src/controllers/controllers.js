@@ -1,35 +1,31 @@
 import { MAIN_URL } from "../constants/url.js";
+import puppeteer from "puppeteer";
 
  export async function getCandyList(req,res){
 
 // Example pattern: "pairAddress":"4V1Q7GcZ4hhTQ5sVVfKMtJpafoY2XyrAFyK3KU5hzkEZ"
-const PAIR_REGEX = /"pairAddress":"(.*?)"/g;
+
 
  try {
     const { url } = req.query;
     if (!url) {
       return res.status(400).json({ error: "Missing ?url=" });
     }
+const browser = await puppeteer.launch({ headless: true });
+  const page = await browser.newPage();
+  await page.goto(url, { waitUntil: "networkidle2" });
 
-    // Fetch webpage HTML
-    const response = await fetch(url);
-    const html = await response.text();
+  const html = await page.content();
+  await browser.close();
 
-    // Find all pair addresses
-    let matches = [];
-    let match;
+  const PAIR_REGEX = /"pairAddress":"(.*?)"/g;
+  let matches = [];
+  let match;
+  while ((match = PAIR_REGEX.exec(html)) !== null) {
+    matches.push(match[1]);
+  }
 
-    while ((match = PAIR_REGEX.exec(html)) !== null) {
-      matches.push(match[1]); // Only the address inside quotes
-    }
-
-    // Return first 10 results
-    const limited = matches.slice(0, 10);
-
-    return res.json({
-      count: limited.length,
-      results: limited
-    });
+  res.json({ count: matches.length, results: matches.slice(0, 10) });
 
   } catch (err) {
     console.error("Error:", err);
