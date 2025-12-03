@@ -4,7 +4,10 @@ import chromium from "chromium";
 export async function getCandyList(req, res) {
   try {
     const { url } = req.query;
-    if (!url) return res.status(400).json({ error: "Missing ?url=" });
+
+    if (!url) {
+      return res.status(400).json({ error: "Missing ?url=" });
+    }
 
     const browser = await puppeteer.launch({
       executablePath: chromium.path,
@@ -12,84 +15,71 @@ export async function getCandyList(req, res) {
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
         "--disable-gpu",
-        "--single-process",
-        "--no-zygote"
+        "--disable-dev-shm-usage",
+        "--disable-dev-tools",
+        "--no-zygote",
+        "--no-first-run",
+        "--single-process"
       ]
     });
 
     const page = await browser.newPage();
 
+    // Set mobile headers (DexScreener behaves better)
+    await page.setUserAgent(
+      "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) " +
+      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
+    );
+
     await page.goto(url, {
-      waitUntil: "domcontentloaded",
+      waitUntil: "networkidle2",
       timeout: 60000
     });
 
-    // get ALL <script> contents
-    const scripts = await page.$$eval("script", els => els.map(e => e.innerText));
+    // Wait for React to load first rows
+    await page.waitForSelector("a[href*='pair']", { timeout: 20000 });
+
+    // Auto-scroll to load ALL lazy-loaded rows
+    await autoScroll(page);
+
+    // Extract DOM data from links containing /pair/
+    const pairs = await page.$$eval("a[href*='/pair/']", els =>
+      els
+        .map(e => e.getAttribute("href"))
+        .filter(x => x && x.includes("/pair/"))
+        .map(x => x.split("/").pop())
+    );
 
     await browser.close();
 
-    let foundPairs = [];
-
-    for (const script of scripts) {
-      if (!script) continue;
-
-      // Must contain pairAddress to be DexScreener data
-      if (script.includes("pairAddress")) {
-        try {
-          // Extract JSON safely
-          const jsonStart = script.indexOf("{");
-          const jsonEnd = script.lastIndexOf("}");
-          const jsonString = script.slice(jsonStart, jsonEnd + 1);
-
-          const data = JSON.parse(jsonString);
-
-          // Search recursively for pairs
-          const pairs = extractPairs(data);
-          if (pairs.length > 0) {
-            foundPairs = pairs;
-            break;
-          }
-        } catch (e) {}
-      }
-    }
-
-    if (foundPairs.length === 0) {
-      return res.json({ error: "DexScreener JSON not found", pairs: [] });
-    }
-
-    res.json({
-      count: foundPairs.length,
-      results: foundPairs
+    return res.json({
+      count: pairs.length,
+      results: Array.from(new Set(pairs)) // dedupe
     });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Scraping failed" });
+    console.error("SCRAPER ERROR:", err);
+    return res.status(500).json({ error: "Scraping failed" });
   }
 }
 
-// recursively search for array of objects containing pairAddress
-function extractPairs(obj) {
-  let pairs = [];
+// Smooth auto-scrolling to load lazy content
+async function autoScroll(page) {
+  await page.evaluate(async () => {
+    await new Promise(resolve => {
+      let total = 0;
+      const distance = 500;
+      const timer = setInterval(() => {
+        const scrollHeight = document.body.scrollHeight;
+        window.scrollBy(0, distance);
+        total += distance;
 
-  if (Array.isArray(obj)) {
-    for (const item of obj) {
-      pairs = pairs.concat(extractPairs(item));
-    }
-    return pairs;
-  }
-
-  if (obj && typeof obj === "object") {
-    // a valid pair object
-    if (obj.pairAddress) return [obj];
-
-    for (const key of Object.keys(obj)) {
-      pairs = pairs.concat(extractPairs(obj[key]));
-    }
-  }
-
-  return pairs;
+        if (total >= scrollHeight * 1.2) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 200);
+    });
+  });
 }
