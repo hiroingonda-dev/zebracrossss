@@ -1,0 +1,1 @@
+export const MAIN_URL = "https://dexscreener.com/?rankBy=pairAge&order=asc&boosted=1";
