@@ -26,33 +26,70 @@ export async function getCandyList(req, res) {
       timeout: 60000
     });
 
-    // Get raw HTML
-    const html = await page.content();
+    // get ALL <script> contents
+    const scripts = await page.$$eval("script", els => els.map(e => e.innerText));
+
     await browser.close();
 
-    // Extract the SSR JSON (window.__SERVER_DATA)
-    const ssrMatch = html.match(/window\.__SERVER_DATA\s*=\s*(\{.*?\});/s);
+    let foundPairs = [];
 
-    if (!ssrMatch) {
-      return res.json({ error: "SSR data not found", pairs: [] });
+    for (const script of scripts) {
+      if (!script) continue;
+
+      // Must contain pairAddress to be DexScreener data
+      if (script.includes("pairAddress")) {
+        try {
+          // Extract JSON safely
+          const jsonStart = script.indexOf("{");
+          const jsonEnd = script.lastIndexOf("}");
+          const jsonString = script.slice(jsonStart, jsonEnd + 1);
+
+          const data = JSON.parse(jsonString);
+
+          // Search recursively for pairs
+          const pairs = extractPairs(data);
+          if (pairs.length > 0) {
+            foundPairs = pairs;
+            break;
+          }
+        } catch (e) {}
+      }
     }
 
-    const ssrJson = JSON.parse(ssrMatch[1]);
-
-    // Path to data
-    const pairs =
-      ssrJson.route?.data?.dexScreenerData?.pairs || [];
-
-    // Extract pairAddress
-    const results = pairs.map(p => p.pairAddress);
+    if (foundPairs.length === 0) {
+      return res.json({ error: "DexScreener JSON not found", pairs: [] });
+    }
 
     res.json({
-      count: results.length,
-      results: results.slice(0, 20)
+      count: foundPairs.length,
+      results: foundPairs
     });
 
   } catch (err) {
-    console.error("SSR Error:", err);
-    res.status(500).json({ error: "Failed to parse SSR data" });
+    console.error(err);
+    res.status(500).json({ error: "Scraping failed" });
   }
+}
+
+// recursively search for array of objects containing pairAddress
+function extractPairs(obj) {
+  let pairs = [];
+
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      pairs = pairs.concat(extractPairs(item));
+    }
+    return pairs;
+  }
+
+  if (obj && typeof obj === "object") {
+    // a valid pair object
+    if (obj.pairAddress) return [obj];
+
+    for (const key of Object.keys(obj)) {
+      pairs = pairs.concat(extractPairs(obj[key]));
+    }
+  }
+
+  return pairs;
 }
