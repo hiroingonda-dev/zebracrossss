@@ -1,36 +1,53 @@
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "chromium";
 
 export async function getCandyList(req, res) {
   try {
     const { url } = req.query;
-    if (!url) return res.status(400).json({ error: "Missing ?url=" });
+    if (!url) {
+      return res.status(400).json({ error: "Missing ?url=" });
+    }
 
     const browser = await puppeteer.launch({
+      executablePath: chromium.path,
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--single-process",
+        "--no-zygote"
+      ],
     });
 
     const page = await browser.newPage();
 
-    // Go to the page
-    await page.goto(url, { waitUntil: "networkidle2" });
+    await page.goto(url, {
+      waitUntil: "networkidle2",
+      timeout: 60000
+    });
 
-    // Wait extra time for JS to populate pair data
-    await page.waitForTimeout(5000); // 5 seconds, adjust if needed
+    await page.waitForTimeout(5000);
 
-    // Get page content
     const html = await page.content();
+
     await browser.close();
 
-    // Regex to extract "pairAddress"
     const PAIR_REGEX = /"pairAddress":"(.*?)"/g;
-    let matches = [], match;
-    while ((match = PAIR_REGEX.exec(html)) !== null) {
-      matches.push(match[1]);
+
+    let matches = [];
+    let m;
+
+    while ((m = PAIR_REGEX.exec(html)) !== null) {
+      matches.push(m[1]);
     }
 
-    // Return first 10
-    res.json({ count: matches.length, results: matches.slice(0, 10) });
+    res.json({
+      count: matches.length,
+      results: matches.slice(0, 10)
+    });
+
   } catch (err) {
     console.error("Puppeteer Error:", err);
     res.status(500).json({ error: "Failed to fetch or parse page" });
